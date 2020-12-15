@@ -2,6 +2,8 @@
 # Contributor: Carsten Feuls <archlinux@carstenfeuls.de>
 # Contributor: Gilles Hamel <hamelg at laposte dot net>
 
+highmem=1
+
 pkgname=grafana
 pkgver=7.3.5
 pkgrel=1
@@ -10,7 +12,7 @@ url='https://grafana.com/'
 arch=('x86_64')
 license=('Apache')
 depends=('glibc' 'freetype2' 'fontconfig' 'gsfonts')
-makedepends=('git' 'go' 'npm' 'grunt-cli' 'python' 'nodejs-lts-erbium')
+makedepends=('git' 'go' 'npm' 'grunt-cli' 'python' 'python2' 'nodejs-lts-erbium')
 backup=('etc/grafana.ini')
 source=("git+https://github.com/grafana/grafana.git#tag=v$pkgver?signed"
         'grafana.service'
@@ -49,9 +51,14 @@ prepare() {
   sed -ri 's,^(\s*plugins\s*=).*,\1 /var/lib/grafana/plugins,' conf/defaults.ini
   sed -ri 's,^(\s*provisioning\s*=).*,\1 /var/lib/grafana/conf/provisioning,' conf/defaults.ini
   sed -ri 's,^(\s*logs\s*=).*,\1 /var/log/grafana,' conf/defaults.ini
+
+  rm -rf packages/{grafana-e2e,grafana-e2e-selectors}
 }
 
 build() {
+  mkdir "$srcdir/gotmp"
+  export GOTMPDIR="$srcdir/gotmp"
+
   echo 'GOPATH setup'
   export GOPATH="$srcdir/gopath"
   export PATH+=":$GOPATH/bin"
@@ -71,18 +78,27 @@ build() {
   echo 'building the frontend'
   export NPM_CONFIG_PREFIX="$srcdir/npm"
   export PATH+=":$NPM_CONFIG_PREFIX/bin"
+  export NODE_OPTIONS=--max-old-space-size=8192
   npm install -g yarn
-  yarn install --pure-lockfile --no-progress
+  yarn install --pure-lockfile --no-progress --network-concurrency=1 --network-timeout=60000
   npm run build release
 }
 
 package() {
+  case "$CARCH" in
+    x86_64) GOARCH=amd64 ;;
+    arm) GOARCH=arm ;;
+    armv6h) GOARCH=arm ;;
+    armv7h) GOARCH=arm ;;
+    aarch64) GOARCH=arm64 ;;
+  esac
+
   install -Dm644 grafana.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/grafana.conf"
   install -Dm644 grafana.sysusers "$pkgdir/usr/lib/sysusers.d/grafana.conf"
   install -Dm644 grafana.service "$pkgdir/usr/lib/systemd/system/grafana.service"
   cd $pkgname
-  install -Dsm755 bin/linux-amd64/grafana-server "$pkgdir/usr/bin/grafana-server"
-  install -Dsm755 bin/linux-amd64/grafana-cli "$pkgdir/usr/bin/grafana-cli"
+  install -Dsm755 bin/linux-$GOARCH/grafana-server "$pkgdir/usr/bin/grafana-server"
+  install -Dsm755 bin/linux-$GOARCH/grafana-cli "$pkgdir/usr/bin/grafana-cli"
   install -Dm640 -o207 -g207 conf/sample.ini "$pkgdir/etc/$pkgname.ini"
   install -Dm644 conf/defaults.ini "$pkgdir/usr/share/$pkgname/conf/defaults.ini"
   install -dm755 "$pkgdir/usr/share/grafana/"
